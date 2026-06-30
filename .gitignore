@@ -4,3 +4,8 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
+data/
+garmin.db
+logs/
+*.csv
+CLAUDE.md
