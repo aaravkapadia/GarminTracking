@@ -98,10 +98,14 @@ def _to_model_kwargs(row: dict) -> dict:
     return kwargs
 
 
-def ingest_today() -> None:
-    """Pull today's Garmin data and upsert it into the database."""
+def ingest_day(target_date: str = None) -> None:
+    """Pull one day of Garmin data and upsert it. Defaults to today.
+
+    ``target_date`` is an ISO date string (e.g. "2026-07-01"); pass it to
+    backfill a specific past day.
+    """
     client = get_client()
-    stats = fetch_daily_stats(client)
+    stats = fetch_daily_stats(client, target_date)
     row = format_daily_stats(stats)
     kwargs = _to_model_kwargs(row)
 
@@ -114,10 +118,19 @@ def ingest_today() -> None:
     logger.info("Ingested daily stats for %s", kwargs.get("calendar_date"))
 
 
-def run_once() -> None:
-    """Single ingest then exit — used by the launchd daily job."""
+# Back-compat alias — the scheduler job still calls the "today" name.
+def ingest_today() -> None:
+    """Pull today's Garmin data and upsert it into the database."""
+    ingest_day()
+
+
+def run_once(target_date: str = None) -> None:
+    """Single ingest then exit — used by the launchd daily job.
+
+    ``target_date`` optionally backfills a specific past day instead of today.
+    """
     init_db()  # create the table if it doesn't exist yet
-    ingest_today()
+    ingest_day(target_date)
 
 
 def main() -> None:
@@ -131,6 +144,7 @@ def main() -> None:
         coalesce=True,
         misfire_grace_time=3600,
     )
+    
     logger.info("Scheduler started — daily Garmin ingest at 23:59 local time. Ctrl+C to stop.")
     scheduler.start()
 
@@ -144,9 +158,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Run a single ingest and exit (used by the launchd daily job).",
     )
+    parser.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Backfill a specific day instead of today. Implies --once.",
+    )
     args = parser.parse_args()
 
-    if args.once:
+    if args.date:
+        run_once(args.date)
+    elif args.once:
         run_once()
     else:
         main()
