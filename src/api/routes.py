@@ -12,10 +12,12 @@ Then open http://127.0.0.1:8000/stats for the dashboard, or /docs for the API.
 from datetime import date
 from typing import Optional
 
+import anthropic
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from src.coach.coach import get_coaching
 from src.db.db import SessionLocal
 from src.db.model import DailyStats
 
@@ -81,6 +83,43 @@ def get_day(calendar_date: date, db: Session = Depends(get_db)) -> dict:
     return _serialize(row)
 
 
+@app.get("/coach")
+def coach(
+    days: int = Query(14, ge=1, le=90, description="Days of history to analyze."),
+    note: Optional[str] = Query(None, description="Optional message to the coach."),
+    refresh: bool = Query(False, description="Bypass the cache and regenerate."),
+) -> dict:
+    """LLM coaching advice (workout / recovery / general) over recent stats.
+
+    Calls Claude via ``src.coach.coach`` — needs ``ANTHROPIC_API_KEY`` set. The
+    ``advice`` field is markdown; the dashboard renders it. Responses are cached
+    until a new day is ingested; pass ``?refresh=true`` to force a new call.
+    """
+    try:
+        result = get_coaching(days=days, extra_note=note, force=refresh)
+    except RuntimeError as e:  # no data ingested yet
+        raise HTTPException(status_code=404, detail=str(e))
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=503,
+            detail="Coach unavailable: ANTHROPIC_API_KEY is missing or invalid.",
+        )
+    except anthropic.APIError as e:  # upstream model/network error
+        raise HTTPException(status_code=502, detail=f"Coach model error: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:  # never leak an opaque 500 — surface the cause
+        raise HTTPException(status_code=500, detail=f"Coach failed: {e!r}")
+    return {
+        "advice": result.advice,
+        "model": result.model,
+        "days_analyzed": result.days_analyzed,
+        "date_range": result.date_range,
+        "generated_at": result.generated_at,
+        "cached": result.cached,
+    }
+
+
 # --- Dashboard page --------------------------------------------------------
 # Self-contained: loads Chart.js from a CDN, fetches /days, draws the charts.
 _DASHBOARD_HTML = """<!doctype html>
@@ -90,6 +129,7 @@ _DASHBOARD_HTML = """<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Garmin daily stats</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 24px;
@@ -103,12 +143,65 @@ _DASHBOARD_HTML = """<!doctype html>
     .card h2 { font-size: 14px; margin: 0 0 12px; color: #c8cdda; font-weight: 600; }
     canvas { width: 100% !important; height: 260px !important; }
     .empty { color: #8a90a2; padding: 40px; text-align: center; }
+    /* Coach panel */
+    #coach-card { margin-bottom: 16px; }
+    .coach-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .coach-head h2 { margin: 0; }
+    #coach-refresh { background: #232838; color: #c8cdda; border: 1px solid #2f3650;
+                     border-radius: 8px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+    #coach-refresh:hover { background: #2b3147; }
+    #coach-refresh:disabled { opacity: .5; cursor: default; }
+    #coach-meta { color: #8a90a2; font-size: 12px; margin-left: auto; }
+    #coach-body { line-height: 1.5; font-size: 14px; color: #dfe3ee; }
+    #coach-body h2 { font-size: 14px; color: #4f8cff; margin: 16px 0 6px; }
+    #coach-body h2:first-child { margin-top: 4px; }
+    #coach-body p { margin: 6px 0; }
+    #coach-body ul { margin: 6px 0; padding-left: 20px; }
+    .coach-err { color: #ff6b6b; }
   </style>
 </head>
 <body>
   <h1>Garmin daily stats</h1>
   <div class="sub" id="sub">Loading…</div>
+
+  <div class="card" id="coach-card">
+    <div class="coach-head">
+      <h2>🏋️ Coach</h2>
+      <button id="coach-refresh">Ask the coach</button>
+      <span id="coach-meta"></span>
+    </div>
+    <div id="coach-body" class="empty">Click “Ask the coach” for advice on today.</div>
+  </div>
+
   <div class="grid" id="grid"></div>
+
+  <script>
+  const coachBody = document.getElementById("coach-body");
+  const coachMeta = document.getElementById("coach-meta");
+  const coachBtn = document.getElementById("coach-refresh");
+
+  async function loadCoach() {
+    coachBtn.disabled = true;
+    coachBody.className = "";
+    coachBody.textContent = "Thinking through your recent data…";
+    coachMeta.textContent = "";
+    try {
+      const res = await fetch("/coach");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      coachBody.innerHTML = marked.parse(data.advice);
+      coachMeta.textContent =
+        `${data.model} · ${data.days_analyzed} days (${data.date_range})`
+        + (data.cached ? " · cached" : "");
+    } catch (e) {
+      coachBody.className = "coach-err";
+      coachBody.textContent = "Coach failed: " + e.message;
+    } finally {
+      coachBtn.disabled = false;
+    }
+  }
+  coachBtn.addEventListener("click", loadCoach);
+  </script>
 
   <script>
   const HOUR = 3600;
