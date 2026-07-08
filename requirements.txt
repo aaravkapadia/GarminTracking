@@ -1,0 +1,9 @@
+fastapi==0.128.8
+uvicorn[standard]==0.38.0
+sqlalchemy==2.0.51
+pandas==2.3.3
+garminconnect==0.2.8
+apscheduler==3.11.3
+python-dotenv==1.0.1
+anthropic==0.116.0
+psycopg2-binary==2.9.10

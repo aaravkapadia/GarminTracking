@@ -9,19 +9,55 @@ Run locally (from the project root):
 Then open http://127.0.0.1:8000/stats for the dashboard, or /docs for the API.
 """
 
+import logging
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Optional
 
 import anthropic
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from src.coach.coach import get_coaching
-from src.db.db import SessionLocal
+from src.db.db import SessionLocal, init_db
 from src.db.model import DailyStats
+from src.ingest.scheduler import ingest_today
 
-app = FastAPI(title="Garmin daily stats", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create tables and start the in-process daily-ingest scheduler.
+
+    On Railway there's no launchd, so the daily job lives inside the web
+    process. The cron fires at 23:59 in the container's timezone — set the
+    ``TZ`` env var on the service to control which timezone that is (Railway
+    defaults to UTC). ``ingest_today`` upserts on the primary key, so a rare
+    double-fire across replicas is idempotent.
+    """
+    init_db()
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        ingest_today,
+        trigger=CronTrigger(hour=23, minute=59),
+        id="garmin_daily_ingest",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    scheduler.start()
+    logger.info("Started in-process daily Garmin ingest at 23:59 (%s).", scheduler.timezone)
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="Garmin daily stats", version="0.1.0", lifespan=lifespan)
 
 
 def get_db():
