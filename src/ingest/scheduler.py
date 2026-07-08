@@ -6,8 +6,9 @@ row into the ``daily_stats`` table. Scheduled to run once per day at 23:59 local
 time.
 """
 
-from datetime import date
+from datetime import date, timedelta
 import logging
+import time
 
 import pandas as pd
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -98,13 +99,15 @@ def _to_model_kwargs(row: dict) -> dict:
     return kwargs
 
 
-def ingest_day(target_date: str = None) -> None:
+def ingest_day(target_date: str = None, client=None) -> None:
     """Pull one day of Garmin data and upsert it. Defaults to today.
 
     ``target_date`` is an ISO date string (e.g. "2026-07-01"); pass it to
-    backfill a specific past day.
+    backfill a specific past day. ``client`` reuses an existing logged-in
+    Garmin client (so a backfill loop authenticates once); defaults to a fresh
+    login.
     """
-    client = get_client()
+    client = client or get_client()
     stats = fetch_daily_stats(client, target_date)
     row = format_daily_stats(stats)
     kwargs = _to_model_kwargs(row)
@@ -131,6 +134,35 @@ def run_once(target_date: str = None) -> None:
     """
     init_db()  # create the table if it doesn't exist yet
     ingest_day(target_date)
+
+
+def run_backfill(start: str, end: str = None, pause: float = 1.0) -> None:
+    """Backfill an inclusive range of past days, authenticating once.
+
+    ``start`` and ``end`` are ISO date strings; ``end`` defaults to today. Days
+    that fail (e.g. no data for that date) are logged and skipped so one bad day
+    doesn't abort the run. ``pause`` seconds between days to be gentle on Garmin.
+    """
+    init_db()
+    start_d = date.fromisoformat(start)
+    end_d = date.fromisoformat(end) if end else date.today()
+    if start_d > end_d:
+        raise ValueError(f"start {start_d} is after end {end_d}")
+
+    client = get_client()  # one login for the whole range
+    day = start_d
+    ok = 0
+    while day <= end_d:
+        try:
+            ingest_day(day.isoformat(), client=client)
+            ok += 1
+        except Exception as e:  # keep going — a missing day shouldn't abort
+            logger.warning("Backfill skipped %s: %s", day, e)
+        day += timedelta(days=1)
+        if day <= end_d:
+            time.sleep(pause)
+    logger.info("Backfill complete: %d/%d days ingested (%s → %s)",
+                ok, (end_d - start_d).days + 1, start_d, end_d)
 
 
 def main() -> None:
@@ -163,9 +195,22 @@ if __name__ == "__main__":
         metavar="YYYY-MM-DD",
         help="Backfill a specific day instead of today. Implies --once.",
     )
+    parser.add_argument(
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="Backfill every day from this date through --end (default: today). "
+             "One login for the whole range.",
+    )
+    parser.add_argument(
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Last day of a --start backfill range (inclusive). Defaults to today.",
+    )
     args = parser.parse_args()
 
-    if args.date:
+    if args.start:
+        run_backfill(args.start, args.end)
+    elif args.date:
         run_once(args.date)
     elif args.once:
         run_once()

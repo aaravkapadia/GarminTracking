@@ -17,6 +17,12 @@ def get_client() -> Garmin:
     if token:
         client = Garmin()
         client.garth.loads(token)  # restore OAuth tokens; no password/MFA needed
+        # garth.loads() restores only the tokens; login() also populates the
+        # profile, and get_stats() builds its URL from display_name. Without
+        # this the request hits .../daily/None and Garmin 403s. Touching
+        # garth.profile lazily fetches it using the loaded tokens.
+        client.display_name = client.garth.profile["displayName"]
+        client.full_name = client.garth.profile["fullName"]
         return client
 
     client = Garmin(os.getenv("GARMIN_EMAIL"), os.getenv("GARMIN_PASSWORD"))

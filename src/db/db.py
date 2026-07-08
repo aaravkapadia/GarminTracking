@@ -30,7 +30,15 @@ def _normalize_db_url(url: str) -> str:
     return url
 
 
-engine = sa.create_engine(_normalize_db_url(os.getenv("DB_URL")))
+_DB_URL = os.getenv("DB_URL")
+if not _DB_URL:
+    raise RuntimeError(
+        "DB_URL is not set. Locally, put it in .env "
+        "(e.g. DB_URL=sqlite:///garmin.db). On Railway, set it on the app "
+        "service to reference Postgres, e.g. DB_URL=${{Postgres.DATABASE_URL}}."
+    )
+
+engine = sa.create_engine(_normalize_db_url(_DB_URL))
 SessionLocal = sessionmaker(bind=engine)
 
 
