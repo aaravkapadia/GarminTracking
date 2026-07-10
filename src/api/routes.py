@@ -1,9 +1,5 @@
-"""Read-only HTTP API over the ingested Garmin daily stats.
-
-Serves rows from the ``daily_stats`` table (see src/db/model.py). Runs against
-whatever ``DB_URL`` points at, so it works on local SQLite now and on a hosted
-Postgres after migration with no code change.
-
+"""
+Read only endpoints to display garmin data
 Run locally (from the project root):
     .venv/bin/uvicorn src.api.routes:app --reload
 Then open http://127.0.0.1:8000/stats for the dashboard, or /docs for the API.
@@ -13,14 +9,12 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Optional
-
 import anthropic
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-
 from src.coach.coach import get_coaching
 from src.db.db import SessionLocal, init_db
 from src.db.model import DailyStats
@@ -31,13 +25,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create tables and start the in-process daily-ingest scheduler.
-
-    On Railway there's no launchd, so the daily job lives inside the web
-    process. The cron fires at 23:59 in the container's timezone — set the
-    ``TZ`` env var on the service to control which timezone that is (Railway
-    defaults to UTC). ``ingest_today`` upserts on the primary key, so a rare
-    double-fire across replicas is idempotent.
+    """
+    Daily scheduled ingest into db
     """
     init_db()
     scheduler = BackgroundScheduler()
@@ -61,7 +50,7 @@ app = FastAPI(title="Garmin daily stats", version="0.1.0", lifespan=lifespan)
 
 
 def get_db():
-    """Yield a request-scoped SQLAlchemy session, closed when the request ends."""
+    """SQLAlchemy session"""
     db = SessionLocal()
     try:
         yield db
@@ -70,22 +59,19 @@ def get_db():
 
 
 def _serialize(row: DailyStats) -> dict:
-    """Turn a DailyStats row into a JSON-friendly dict keyed by snake_case attrs."""
+    """Clean stats into serialized json"""
     return {attr: getattr(row, attr) for attr in DailyStats.__mapper__.columns.keys()}
 
 
 @app.get("/health")
 def health():
+    """Health check"""
     return {"status": "ok"}
 
 
 @app.get("/stats", response_class=HTMLResponse)
 def stats_dashboard():
-    """Single-page dashboard: charts of the recent daily stats.
-
-    Pure HTML + Chart.js (from a CDN). It fetches /days and renders the charts
-    in the browser, so there's no server-side rendering or extra dependency.
-    """
+    """Single-page dashboard: charts of the recent daily stats + Coach"""
     return _DASHBOARD_HTML
 
 
@@ -94,7 +80,7 @@ def list_days(
     limit: Optional[int] = Query(None, ge=1, le=1000, description="Max rows to return."),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    """All days, newest first. Pass ?limit=N to cap the result."""
+    """All days stats"""
     q = db.query(DailyStats).order_by(DailyStats.calendar_date.desc())
     if limit is not None:
         q = q.limit(limit)
@@ -112,7 +98,7 @@ def latest_day(db: Session = Depends(get_db)) -> dict:
 
 @app.get("/days/{calendar_date}")
 def get_day(calendar_date: date, db: Session = Depends(get_db)) -> dict:
-    """Full stats for one day. 404 if that day hasn't been ingested."""
+    """Full stats for a specific date. 404 if that day hasn't been ingested."""
     row = db.get(DailyStats, calendar_date)
     if row is None:
         raise HTTPException(status_code=404, detail=f"No data for {calendar_date}.")
@@ -125,11 +111,8 @@ def coach(
     note: Optional[str] = Query(None, description="Optional message to the coach."),
     refresh: bool = Query(False, description="Bypass the cache and regenerate."),
 ) -> dict:
-    """LLM coaching advice (workout / recovery / general) over recent stats.
-
-    Calls Claude via ``src.coach.coach`` — needs ``ANTHROPIC_API_KEY`` set. The
-    ``advice`` field is markdown; the dashboard renders it. Responses are cached
-    until a new day is ingested; pass ``?refresh=true`` to force a new call.
+    """
+    Coach endpoint
     """
     try:
         result = get_coaching(days=days, extra_note=note, force=refresh)
@@ -155,9 +138,9 @@ def coach(
         "cached": result.cached,
     }
 
-
-# --- Dashboard page --------------------------------------------------------
-# Self-contained: loads Chart.js from a CDN, fetches /days, draws the charts.
+"""
+Dashboard for statistic charts + coach
+"""
 _DASHBOARD_HTML = """<!doctype html>
 <html lang="en">
 <head>

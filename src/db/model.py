@@ -1,3 +1,7 @@
+""" 
+Model for db ingestion
+"""
+
 from datetime import date
 from typing import Optional
 import sqlalchemy as sa
@@ -7,7 +11,7 @@ class Base(DeclarativeBase):
     pass
 
 class DailyStats(Base):
-    """One row per day of Garmin watch data, matching stats_clean.csv.
+    """One row per day of Garmin watch data.
 
     ``calendar_date`` is the primary key, so re-ingesting the same day is a
     no-op/upsert rather than a duplicate row. The scheduler appends one new
@@ -16,47 +20,39 @@ class DailyStats(Base):
 
     __tablename__ = "daily_stats"
 
-    # Primary key — one row per day.
+    # Primary key 
     calendar_date: Mapped[date] = mapped_column("calendarDate", sa.Date, primary_key=True)
-
-    # Activity / steps
+    # Activity
     total_steps: Mapped[Optional[int]] = mapped_column("totalSteps")
     daily_step_goal: Mapped[Optional[int]] = mapped_column("dailyStepGoal")
     total_kilocalories: Mapped[Optional[float]] = mapped_column("totalKilocalories")
     active_kilocalories: Mapped[Optional[float]] = mapped_column("activeKilocalories")
     bmr_kilocalories: Mapped[Optional[float]] = mapped_column("bmrKilocalories")
-
-    # Heart rate (from stats block)
+    # Heart rate block 1
     resting_heart_rate: Mapped[Optional[int]] = mapped_column("restingHeartRate")
     max_heart_rate: Mapped[Optional[int]] = mapped_column("maxHeartRate")
     min_heart_rate: Mapped[Optional[int]] = mapped_column("minHeartRate")
-
     # Stress
     average_stress_level: Mapped[Optional[int]] = mapped_column("averageStressLevel")
     max_stress_level: Mapped[Optional[int]] = mapped_column("maxStressLevel")
-
     # Body battery
     body_battery_highest_value: Mapped[Optional[int]] = mapped_column("bodyBatteryHighestValue")
     body_battery_lowest_value: Mapped[Optional[int]] = mapped_column("bodyBatteryLowestValue")
     body_battery_most_recent_value: Mapped[Optional[int]] = mapped_column("bodyBatteryMostRecentValue")
-
-    # Intensity / active time
+    # Intensity
     moderate_intensity_minutes: Mapped[Optional[int]] = mapped_column("moderateIntensityMinutes")
     vigorous_intensity_minutes: Mapped[Optional[int]] = mapped_column("vigorousIntensityMinutes")
     highly_active_seconds: Mapped[Optional[int]] = mapped_column("highlyActiveSeconds")
     active_seconds: Mapped[Optional[int]] = mapped_column("activeSeconds")
     sedentary_seconds: Mapped[Optional[int]] = mapped_column("sedentarySeconds")
     sleeping_seconds: Mapped[Optional[int]] = mapped_column("sleepingSeconds")
-
     # Floors
     floors_ascended: Mapped[Optional[float]] = mapped_column("floorsAscended")
     floors_descended: Mapped[Optional[float]] = mapped_column("floorsDescended")
-
     # SpO2 / respiration (daytime)
     average_spo2: Mapped[Optional[float]] = mapped_column("averageSpo2")
     lowest_spo2: Mapped[Optional[int]] = mapped_column("lowestSpo2")
     avg_waking_respiration_value: Mapped[Optional[float]] = mapped_column("avgWakingRespirationValue")
-
     # Sleep
     sleep_calendar_date: Mapped[Optional[date]] = mapped_column("sleep_calendarDate", sa.Date)
     sleep_sleep_time_seconds: Mapped[Optional[int]] = mapped_column("sleep_sleepTimeSeconds")
@@ -74,8 +70,7 @@ class DailyStats(Base):
     sleep_avg_overnight_hrv: Mapped[Optional[float]] = mapped_column("sleep_avgOvernightHrv")
     sleep_hrv_status: Mapped[Optional[str]] = mapped_column("sleep_hrvStatus")
     sleep_resting_heart_rate: Mapped[Optional[int]] = mapped_column("sleep_restingHeartRate")
-
-    # Heart rate (from heart-rate block)
+    # Heart rate block 2
     hr_resting_heart_rate: Mapped[Optional[int]] = mapped_column("hr_restingHeartRate")
     hr_max_heart_rate: Mapped[Optional[int]] = mapped_column("hr_maxHeartRate")
     hr_min_heart_rate: Mapped[Optional[int]] = mapped_column("hr_minHeartRate")

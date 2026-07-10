@@ -1,3 +1,6 @@
+""" 
+Initalize db and normalize url
+"""
 import os
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -11,14 +14,8 @@ load_dotenv()
 
 
 def _normalize_db_url(url: str) -> str:
-    """Route Postgres URLs through the pure-Python pg8000 driver.
-
-    Railway hands out ``postgresql://…`` (sometimes ``postgres://``), which
-    SQLAlchemy would drive with psycopg2 — a C extension that needs Postgres
-    build headers and breaks the Nixpacks build. pg8000 is pure Python, so we
-    rewrite the scheme to ``postgresql+pg8000`` and drop the ``sslmode`` query
-    param (pg8000 doesn't accept it). SQLite and other URLs pass through
-    unchanged.
+    """
+    Normalize URL for Railway
     """
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
@@ -33,9 +30,7 @@ def _normalize_db_url(url: str) -> str:
 _DB_URL = os.getenv("DB_URL")
 if not _DB_URL:
     raise RuntimeError(
-        "DB_URL is not set. Locally, put it in .env "
-        "(e.g. DB_URL=sqlite:///garmin.db). On Railway, set it on the app "
-        "service to reference Postgres, e.g. DB_URL=${{Postgres.DATABASE_URL}}."
+        "DB_URL is not set."
     )
 
 engine = sa.create_engine(_normalize_db_url(_DB_URL))
@@ -43,6 +38,6 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db() -> None:
-    """Create tables that don't exist yet. Safe to call repeatedly."""
+    """Create tables that don't exist yet."""
     Base.metadata.create_all(engine)
 

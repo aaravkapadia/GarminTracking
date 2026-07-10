@@ -1,9 +1,5 @@
-"""Daily Garmin ingest job.
-
-Pulls one day of stats from Garmin Connect, formats it exactly like main.py
-(json_normalize -> drop noisy columns -> rename -> keep), and upserts a single
-row into the ``daily_stats`` table. Scheduled to run once per day at 23:59 local
-time.
+"""
+Daily Garmin ingest job.
 """
 
 from datetime import date, timedelta
@@ -21,7 +17,6 @@ from src.db.model import DailyStats
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# Same drop/keep rules as main.py — kept here so the job is self-contained.
 _DROP_SUBSTRINGS = [
     "heartRateValues", "heartRateValueDescriptors", "sleepMovement",
     "sleepLevels", "sleepStress", "sleepHeartRate", "sleepBodyBattery",
@@ -50,21 +45,12 @@ _KEEP = [
     "hr_restingHeartRate", "hr_maxHeartRate", "hr_minHeartRate",
 ]
 
-# Clean CSV column name -> model attribute (built from the model so the two
-# never drift apart).
 _COL_TO_ATTR = {col.name: attr for attr, col in DailyStats.__mapper__.columns.items()}
 
 
 def format_daily_stats(stats: dict) -> dict:
-    """Flatten and clean a raw fetch_daily_stats() payload into one row.
-
-    Mirrors the transformation in main.py and returns a dict keyed by the
-    cleaned column names (the same headers as stats_clean.csv).
-    """
+    """Flatten and clean a raw fetch_daily_stats() payload into one row."""
     df = pd.json_normalize(stats)
-
-    # NB: compared against c.lower() with original-case substrings, exactly as
-    # main.py does — the keep list below is what actually selects the columns.
     drop = [c for c in df.columns if any(x in c.lower() for x in _DROP_SUBSTRINGS)]
     df = df.drop(columns=drop, errors="ignore")
 
@@ -92,7 +78,7 @@ def _to_model_kwargs(row: dict) -> dict:
             kwargs[attr] = None
         elif col_name.endswith("calendarDate"):
             kwargs[attr] = date.fromisoformat(str(value)[:10])
-        elif hasattr(value, "item"):  # numpy scalar -> python scalar
+        elif hasattr(value, "item"):  
             kwargs[attr] = value.item()
         else:
             kwargs[attr] = value
@@ -100,63 +86,46 @@ def _to_model_kwargs(row: dict) -> dict:
 
 
 def ingest_day(target_date: str = None, client=None) -> None:
-    """Pull one day of Garmin data and upsert it. Defaults to today.
-
-    ``target_date`` is an ISO date string (e.g. "2026-07-01"); pass it to
-    backfill a specific past day. ``client`` reuses an existing logged-in
-    Garmin client (so a backfill loop authenticates once); defaults to a fresh
-    login.
-    """
+    """Pull one day of Garmin data and upsert it. Defaults to today."""
     client = client or get_client()
     stats = fetch_daily_stats(client, target_date)
     row = format_daily_stats(stats)
     kwargs = _to_model_kwargs(row)
 
     with SessionLocal() as session:
-        # merge() upserts on the primary key (calendar_date), so re-running for
-        # the same day updates instead of creating a duplicate.
         session.merge(DailyStats(**kwargs))
         session.commit()
 
     logger.info("Ingested daily stats for %s", kwargs.get("calendar_date"))
 
 
-# Back-compat alias — the scheduler job still calls the "today" name.
 def ingest_today() -> None:
     """Pull today's Garmin data and upsert it into the database."""
     ingest_day()
 
 
 def run_once(target_date: str = None) -> None:
-    """Single ingest then exit — used by the launchd daily job.
-
-    ``target_date`` optionally backfills a specific past day instead of today.
-    """
-    init_db()  # create the table if it doesn't exist yet
+    """Single ingest then exit, used by the launchd daily job."""
+    init_db()  
     ingest_day(target_date)
 
 
 def run_backfill(start: str, end: str = None, pause: float = 1.0) -> None:
-    """Backfill an inclusive range of past days, authenticating once.
-
-    ``start`` and ``end`` are ISO date strings; ``end`` defaults to today. Days
-    that fail (e.g. no data for that date) are logged and skipped so one bad day
-    doesn't abort the run. ``pause`` seconds between days to be gentle on Garmin.
-    """
+    """Backfill an inclusive range of past days, authenticating once."""
     init_db()
     start_d = date.fromisoformat(start)
     end_d = date.fromisoformat(end) if end else date.today()
     if start_d > end_d:
         raise ValueError(f"start {start_d} is after end {end_d}")
 
-    client = get_client()  # one login for the whole range
+    client = get_client() 
     day = start_d
     ok = 0
     while day <= end_d:
         try:
             ingest_day(day.isoformat(), client=client)
             ok += 1
-        except Exception as e:  # keep going — a missing day shouldn't abort
+        except Exception as e:
             logger.warning("Backfill skipped %s: %s", day, e)
         day += timedelta(days=1)
         if day <= end_d:
@@ -166,7 +135,7 @@ def run_backfill(start: str, end: str = None, pause: float = 1.0) -> None:
 
 
 def main() -> None:
-    init_db()  # create the table if it doesn't exist yet
+    init_db() 
     scheduler = BlockingScheduler()
     scheduler.add_job(
         ingest_today,

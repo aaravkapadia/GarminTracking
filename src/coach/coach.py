@@ -1,16 +1,5 @@
-"""LLM 'online coach' over the ingested Garmin daily stats.
-
-Reads recent rows from the ``daily_stats`` table, hands Claude a compact digest
-of the numbers, and asks it to act like a personal coach — reading the trends
-and returning workout / recovery / general guidance as markdown.
-
-The model is Claude Opus 4.8 via the Anthropic SDK. Auth comes from
-``ANTHROPIC_API_KEY`` (put it in ``.env`` next to the Garmin credentials); the
-SDK picks it up from the environment.
-
-Programmatic use:
-    from src.coach.coach import get_coaching
-    print(get_coaching(days=14).advice)
+"""
+Claude coach for advice based on past data
 """
 
 from __future__ import annotations
@@ -26,8 +15,10 @@ from src.db.model import DailyStats
 
 MODEL = "claude-opus-4-8"
 
-# The metrics a coach actually reasons about, in the order they appear in the
-# per-day digest line. (attribute, label, formatter).
+"""
+Fields for context
+"""
+
 _FIELDS = [
     ("total_steps", "steps", lambda v: f"{int(v)}"),
     ("resting_heart_rate", "rhr", lambda v: f"{int(v)}bpm"),
@@ -45,6 +36,7 @@ _FIELDS = [
     ("active_kilocalories", "active_kcal", lambda v: f"{int(v)}"),
 ]
 
+# Prompt
 _SYSTEM = """\
 You are an experienced endurance and strength coach reviewing a client's \
 wearable data (from a Garmin watch). You get a digest of the last few days of \
@@ -82,24 +74,21 @@ disclaimers. You are a coach, not a doctor."""
 class Coaching:
     """Result of a coaching call."""
 
-    advice: str  # markdown
+    advice: str 
     model: str
     days_analyzed: int
-    date_range: str  # "2026-06-23 → 2026-07-06", or "" when no data
-    generated_at: str  # ISO-8601 UTC
-    cached: bool = False  # True when served from the in-memory cache
+    date_range: str  
+    generated_at: str  
+    cached: bool = False
 
 
-# In-memory cache. Keyed by (days, note, latest_ingested_date) so advice is
-# reused until a new day is ingested (or the window / note changes). Process-
-# local — clears on restart, which is fine for a single-user app.
+# In memory cache to prevent unnecessary calls and save recent ones
 _CACHE: dict[tuple, Coaching] = {}
 
 
 def _digest(rows: list[DailyStats]) -> str:
-    """Render rows (chronological, oldest first) as one compact line per day.
-
-    Days with no populated metrics are skipped so the model isn't fed noise.
+    """
+    Render rows for LLM context
     """
     lines = []
     for r in rows:
@@ -116,17 +105,7 @@ def _digest(rows: list[DailyStats]) -> str:
 def get_coaching(
     days: int = 14, extra_note: str | None = None, force: bool = False
 ) -> Coaching:
-    """Analyze the most recent ``days`` of stats and return coaching advice.
-
-    ``extra_note`` is an optional free-text message from the user (e.g. "I have
-    a race Saturday") that gets appended to the prompt.
-
-    Results are cached in-process keyed by ``(days, note, latest ingested day)``,
-    so repeat calls don't re-hit the model until new data lands. Pass
-    ``force=True`` to bypass the cache and regenerate.
-
-    Raises ``RuntimeError`` if there is no data yet, or the SDK's
-    ``AuthenticationError`` if ``ANTHROPIC_API_KEY`` is missing/invalid.
+    """Analyze the most recent days + additional user prompted context
     """
     with SessionLocal() as session:
         rows = (
@@ -139,19 +118,14 @@ def get_coaching(
     if not rows:
         raise RuntimeError("No Garmin data ingested yet — nothing to coach on.")
 
-    latest_date = rows[0].calendar_date  # newest ingested day (rows are desc)
+    latest_date = rows[0].calendar_date 
     cache_key = (days, extra_note, latest_date)
-
-    # Drop entries from older ingest days so the cache doesn't grow unbounded.
     for key in [k for k in _CACHE if k[2] != latest_date]:
         del _CACHE[key]
-
     if not force and cache_key in _CACHE:
         return replace(_CACHE[cache_key], cached=True)
-
-    rows.reverse()  # chronological: oldest first so trends read left-to-right
+    rows.reverse() 
     digest = _digest(rows)
-
     user_content = (
         f"Here is the last {len(rows)} day(s) of my Garmin daily stats, "
         f"oldest first:\n\n{digest}\n\n"
@@ -159,8 +133,7 @@ def get_coaching(
     )
     if extra_note:
         user_content += f"\n\nAlso keep this in mind: {extra_note}"
-
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the env
+    client = anthropic.Anthropic() 
     response = client.messages.create(
         model=MODEL,
         max_tokens=3000,

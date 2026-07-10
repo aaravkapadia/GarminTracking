@@ -7,20 +7,11 @@ load_dotenv()
 
 def get_client() -> Garmin:
     """Return a logged-in Garmin client.
-
-    Prefers pre-generated OAuth tokens in GARMIN_TOKEN_BASE64 (see
-    scripts/dump_garmin_token.py) so headless deploys never hit an interactive
-    MFA prompt. Falls back to email+password login for local use, which may
-    prompt for MFA on first run.
     """
     token = os.getenv("GARMIN_TOKEN_BASE64")
     if token:
         client = Garmin()
-        client.garth.loads(token)  # restore OAuth tokens; no password/MFA needed
-        # garth.loads() restores only the tokens; login() also populates the
-        # profile, and get_stats() builds its URL from display_name. Without
-        # this the request hits .../daily/None and Garmin 403s. Touching
-        # garth.profile lazily fetches it using the loaded tokens.
+        client.garth.loads(token) 
         client.display_name = client.garth.profile["displayName"]
         client.full_name = client.garth.profile["fullName"]
         return client
